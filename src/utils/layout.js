@@ -29,11 +29,11 @@ function ensurePrepared() {
  *
  * RenderItem = { text: string, x: number, y: number, lineIndex: number, partIndex: 0|1|2 }
  */
-export function buildRenderItems(canvasWidth) {
+export function buildRenderItems(canvasWidth, topPadding = PADDING_TOP) {
   ensurePrepared()
   const contentWidth = Math.max(200, canvasWidth - MARGIN_H * 2)
   const items = []
-  let y = PADDING_TOP
+  let y = topPadding
 
   for (let pi = 0; pi < _prepared.length; pi++) {
     const partIndex =

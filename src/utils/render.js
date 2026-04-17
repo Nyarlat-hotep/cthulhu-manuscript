@@ -1,66 +1,68 @@
-import { MARGIN_H, LINE_HEIGHT } from './layout.js'
-import { getBackgroundColor, getTextColor, getClearAlpha } from './effects.js'
+import { MARGIN_H } from './layout.js'
 
-// ── Background ────────────────────────────────────────────────────────────────
+const HEADLINE_WORDS = ['The', 'Call', 'of', 'Cthulhu']
 
-export function clearCanvas(ctx, w, h, sanity, bgColor) {
-  const alpha = getClearAlpha(sanity)
-  if (alpha >= 1) {
-    ctx.clearRect(0, 0, w, h)
-    ctx.fillStyle = bgColor
-    ctx.fillRect(0, 0, w, h)
-  } else {
-    // Semi-transparent fill for ink trail effect
-    const [r, g, b] = bgColor.match(/\d+/g).map(Number)
-    ctx.fillStyle = `rgba(${r},${g},${b},${alpha})`
-    ctx.fillRect(0, 0, w, h)
-  }
+// Compute headline layout metrics — call this in the resize handler
+export function computeHeadlineMetrics(ctx, w, h) {
+  const padX = 60
+  const REF = 100
+  ctx.font = `bold ${REF}px "UnifrakturCook"`
+  const longestW = ctx.measureText('Cthulhu').width
+  const fontFromWidth  = Math.floor(REF * (w - padX * 2) / longestW)
+  const fontFromHeight = Math.floor(h / (HEADLINE_WORDS.length * 1.25))
+  const fontSize = Math.min(fontFromWidth, fontFromHeight)
+  const lineH = fontSize * 1.18
+  const blockH = lineH * HEADLINE_WORDS.length
+  const totalH = Math.ceil(blockH + h * 0.12)  // headline area + breathing room before story
+  return { fontSize, lineH, blockH, totalH, padX }
 }
 
-// ── Paper grain ───────────────────────────────────────────────────────────────
+// Draw headline scrolling with document content
+export function drawHeadline(ctx, w, scrollTop, metrics) {
+  if (!metrics || metrics.fontSize <= 0) return
+  const { fontSize, lineH, blockH, totalH, padX } = metrics
 
-// Fast LCG seeded per-frame for animated grain
-let _grainSeed = 1
-
-export function drawGrain(ctx, w, h, sanity) {
-  const intensity = 0.025 + sanity * 0.055
-  const cellSize = 3
-  _grainSeed = (_grainSeed * 1664525 + 1013904223) & 0x7fffffff
+  // Vertically center the text block within its totalH area
+  const startY = (totalH - blockH) / 2 - scrollTop
+  if (startY + blockH < -20) return  // scrolled fully off screen
 
   ctx.save()
-  const cols = Math.ceil(w / cellSize)
-  const rows = Math.ceil(h / cellSize)
-  let s = _grainSeed
+  ctx.textBaseline = 'top'
+  ctx.textAlign = 'left'
+  ctx.font = `bold ${fontSize}px "UnifrakturCook"`
+  ctx.fillStyle = 'rgba(200, 168, 130, 0.90)'
 
-  for (let row = 0; row < rows; row++) {
-    for (let col = 0; col < cols; col++) {
-      s = (s * 1664525 + 1013904223) & 0x7fffffff
-      const v = (s >>> 0) / 0x7fffffff
-      if (v > 0.6) {
-        const a = (v - 0.6) * intensity * 2.5
-        ctx.fillStyle = `rgba(255,230,180,${a})`
-        ctx.fillRect(col * cellSize, row * cellSize, cellSize, cellSize)
-      }
-    }
+  for (let i = 0; i < HEADLINE_WORDS.length; i++) {
+    ctx.fillText(HEADLINE_WORDS[i], padX, startY + i * lineH)
   }
   ctx.restore()
 }
 
-// ── Vignette ──────────────────────────────────────────────────────────────────
+export function clearCanvas(ctx, w, h) {
+  ctx.fillStyle = '#1a1208'
+  ctx.fillRect(0, 0, w, h)
+}
 
-export function drawVignette(ctx, w, h, sanity) {
-  const strength = 0.30 + sanity * 0.60
+// Radial darkening centered on tentacle tip (cursor)
+export function drawCursorAura(ctx, w, h, mx, my) {
+  if (mx < -250) return
+  const grad = ctx.createRadialGradient(mx, my, 18, mx, my, 210)
+  grad.addColorStop(0, 'rgba(2, 8, 3, 0.90)')
+  grad.addColorStop(1, 'rgba(0, 0, 0, 0)')
+  ctx.fillStyle = grad
+  ctx.fillRect(0, 0, w, h)
+}
+
+export function drawVignette(ctx, w, h) {
   const cx = w / 2, cy = h / 2
   const r0 = Math.min(w, h) * 0.15
   const r1 = Math.sqrt(cx * cx + cy * cy) * 1.1
   const grad = ctx.createRadialGradient(cx, cy, r0, cx, cy, r1)
   grad.addColorStop(0, 'rgba(0,0,0,0)')
-  grad.addColorStop(1, `rgba(0,0,0,${strength})`)
+  grad.addColorStop(1, 'rgba(0,0,0,0.52)')
   ctx.fillStyle = grad
   ctx.fillRect(0, 0, w, h)
 }
-
-// ── Section heading ───────────────────────────────────────────────────────────
 
 const SECTION_TITLES = [
   'I. The Horror in Clay',
@@ -68,35 +70,26 @@ const SECTION_TITLES = [
   'III. The Madness from the Sea',
 ]
 
-// Draw the chapter title above the first line of each part
-export function drawSectionHeading(ctx, w, scrollTop, items, sanity) {
+export function drawSectionHeading(ctx, w, scrollTop, items) {
   if (items.length === 0) return
-  const headingAlpha = Math.max(0.12, 0.45 - sanity * 0.3)
   ctx.save()
   ctx.font = '13px "IM Fell English"'
   ctx.textAlign = 'center'
   ctx.textBaseline = 'alphabetic'
-  ctx.fillStyle = `rgba(200, 168, 130, ${headingAlpha})`
+  ctx.fillStyle = 'rgba(200, 168, 130, 0.35)'
 
-  // Find the y position of the first line of each part and render heading 28px above it
   const partStarts = [null, null, null]
   for (const item of items) {
-    if (partStarts[item.partIndex] === null) {
-      partStarts[item.partIndex] = item.y
-    }
+    if (partStarts[item.partIndex] === null) partStarts[item.partIndex] = item.y
   }
-
   for (let pi = 0; pi < 3; pi++) {
     if (partStarts[pi] === null) continue
     const hy = partStarts[pi] - 28 - scrollTop
     if (hy < -40 || hy > ctx.canvas.height / (window.devicePixelRatio || 1) + 40) continue
     ctx.fillText(SECTION_TITLES[pi].toUpperCase(), w / 2, hy)
   }
-
   ctx.restore()
 }
-
-// ── Margin annotations ────────────────────────────────────────────────────────
 
 const ANNOTATIONS = [
   "Iä! Iä!", "Ph'nglui mglw'nafh", "Cthulhu R'lyeh", "wgah'nagl fhtagn",
@@ -105,31 +98,26 @@ const ANNOTATIONS = [
   "Iä! Iä! Cthulhu fhtagn!", "Ph'nglui",
 ]
 
-export function drawMarginAnnotations(ctx, w, h, visibleItems, sanity, time, scrollTop) {
-  if (sanity < 0.28) return
-  const t = Math.min(1, (sanity - 0.28) / 0.55)
+export function drawMarginAnnotations(ctx, w, h, visibleItems, time, scrollTop) {
   ctx.save()
   ctx.font = '11px "IM Fell English"'
   ctx.textBaseline = 'alphabetic'
 
   for (let i = 0; i < visibleItems.length; i += 9) {
     const item = visibleItems[i]
-    const screenY = item.y - scrollTop + Math.sin(time * 0.3 + i * 0.8) * 3 * t
+    const screenY = item.y - scrollTop + Math.sin(time * 0.3 + i * 0.8) * 3
     if (screenY < -20 || screenY > h + 20) continue
 
     const ann = ANNOTATIONS[(item.lineIndex * 7 + i) % ANNOTATIONS.length]
-    const wobble = Math.sin(time * 0.5 + item.lineIndex * 0.4) * t * 4
-    const alpha = t * 0.55
+    const wobble = Math.sin(time * 0.5 + item.lineIndex * 0.4) * 4
 
-    // Left margin annotation
     if (item.lineIndex % 18 < 9) {
       ctx.textAlign = 'right'
-      ctx.fillStyle = `rgba(160, 60, 20, ${alpha})`
+      ctx.fillStyle = `rgba(160, 60, 20, 0.20)`
       ctx.fillText(ann, MARGIN_H - 8 + wobble, screenY)
     } else {
-      // Right margin
       ctx.textAlign = 'left'
-      ctx.fillStyle = `rgba(140, 50, 15, ${alpha})`
+      ctx.fillStyle = `rgba(140, 50, 15, 0.20)`
       ctx.fillText(ann, w - MARGIN_H + 8 + wobble, screenY)
     }
   }

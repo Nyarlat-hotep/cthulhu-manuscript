@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { buildRenderItems, disposeLayout, FONT_SIZE, LINE_HEIGHT } from '../utils/layout.js'
-import { easeSanity, getBackgroundColor, getTextColor, applyInkBleed, resetBleed,
-         getLineOscillation, drawGlyphDrift, substituteGlyphs, maybeReverseWords } from '../utils/effects.js'
-import { clearCanvas, drawGrain, drawVignette, drawSectionHeading, drawMarginAnnotations } from '../utils/render.js'
+import { getProximityTextColor, substituteByProximity } from '../utils/effects.js'
+import { computeHeadlineMetrics, drawHeadline, clearCanvas, drawCursorAura, drawVignette, drawSectionHeading, drawMarginAnnotations } from '../utils/render.js'
+import { createSpine, buildSpine, drawTentacle, getCharEffect, INFLUENCE_RADIUS } from '../utils/tentacle.js'
 
 const FONT = `${FONT_SIZE}px "IM Fell English"`
 const SCROLL_BUFFER = LINE_HEIGHT * 4
@@ -12,32 +12,39 @@ export default function ManuscriptCanvas() {
   const containerRef = useRef(null)
   const scrollRef    = useRef(null)
 
-  // RAF-loop state — all refs to avoid re-renders
-  const sanityRef    = useRef(0)
-  const rawScrollRef = useRef(0)
   const scrollTopRef = useRef(0)
   const timeRef      = useRef(0)
   const cssSizeRef   = useRef({ w: 0, h: 0 })
   const itemsRef     = useRef([])
   const charCacheRef = useRef(new Map())
+  const mouseRef         = useRef({ x: -300, y: -300 })
+  const prevMouseRef     = useRef({ x: -300, y: -300 })
+  const smoothSpeedRef   = useRef(0)
+  const writheRef        = useRef(0)
+  const headlineMetrics  = useRef(null)
+  const spineRef         = useRef(createSpine())
 
   const [totalHeight, setTotalHeight] = useState(10000)
   const [fontsReady, setFontsReady]   = useState(false)
 
-  // Gate layout behind font readiness
   useEffect(() => {
     document.fonts.ready.then(() => setFontsReady(true))
   }, [])
 
-  // Scroll handler — update sanity + scrollTop refs only (no re-render)
   const handleScroll = useCallback((e) => {
-    const el = e.currentTarget
-    const maxScroll = el.scrollHeight - el.clientHeight
-    rawScrollRef.current = maxScroll > 0 ? el.scrollTop / maxScroll : 0
-    scrollTopRef.current = el.scrollTop
+    scrollTopRef.current = e.currentTarget.scrollTop
   }, [])
 
-  // ResizeObserver — rebuild layout + resize canvas
+  const handleMouseMove = useCallback((e) => {
+    const rect = containerRef.current?.getBoundingClientRect()
+    if (!rect) return
+    mouseRef.current = { x: e.clientX - rect.left, y: e.clientY - rect.top }
+  }, [])
+
+  const handleMouseLeave = useCallback(() => {
+    mouseRef.current = { x: -300, y: -300 }
+  }, [])
+
   useEffect(() => {
     if (!fontsReady) return
     const container = containerRef.current
@@ -51,16 +58,20 @@ export default function ManuscriptCanvas() {
       canvas.width  = Math.round(w * dpr)
       canvas.height = Math.round(h * dpr)
 
-      const { items, totalHeight: th } = buildRenderItems(w)
+      // Compute headline metrics and use totalH as story text padding
+      const ctx = canvas.getContext('2d')
+      const metrics = computeHeadlineMetrics(ctx, w, h)
+      headlineMetrics.current = metrics
+
+      const { items, totalHeight: th } = buildRenderItems(w, metrics.totalH)
       itemsRef.current = items
-      charCacheRef.current = new Map() // reset char cache on resize
+      charCacheRef.current = new Map()
       setTotalHeight(th)
     })
     obs.observe(container)
     return () => { obs.disconnect(); disposeLayout() }
   }, [fontsReady])
 
-  // RAF loop
   useEffect(() => {
     if (!fontsReady) return
     const canvas = canvasRef.current
@@ -76,51 +87,86 @@ export default function ManuscriptCanvas() {
       const { w, h } = cssSizeRef.current
       if (w === 0 || h === 0) { rafId = requestAnimationFrame(loop); return }
 
-      const rawSanity = rawScrollRef.current
-      const sanity    = easeSanity(rawSanity)
-      sanityRef.current = sanity
-
-      const scrollTop = scrollTopRef.current
+      const { x: mx, y: my } = mouseRef.current
       const time      = timeRef.current
+      const scrollTop = scrollTopRef.current
       const items     = itemsRef.current
+      const spine     = spineRef.current
       const dpr       = window.devicePixelRatio || 1
       const charCache = charCacheRef.current
 
+      // Drive writhe intensity from cursor speed — double-smoothed to kill per-frame jitter
+      const prev = prevMouseRef.current
+      const onScreen = mx > -250
+      if (onScreen && prev.x > -250) {
+        const rawSpeed = Math.hypot(mx - prev.x, my - prev.y) / Math.max(delta, 0.001)
+        // First pass: smooth the noisy raw speed reading
+        smoothSpeedRef.current += (rawSpeed - smoothSpeedRef.current) * Math.min(1, delta * 5)
+      } else {
+        smoothSpeedRef.current *= Math.max(0, 1 - delta * 4)
+      }
+      // Second pass: smooth writhe intensity from the already-smooth speed
+      const writheTarget = Math.min(1, smoothSpeedRef.current / 400)
+      writheRef.current += (writheTarget - writheRef.current) * Math.min(1, delta * 2.5)
+
+      if (onScreen) { prev.x = mx; prev.y = my }
+      else          { prev.x = -300; prev.y = -300 }
+
+      // Build spine procedurally — tip at cursor, body extends lower-right (~45°, cursor-like)
+      buildSpine(spine, mx, my, 0.707, 0.707, time, writheRef.current)
+
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
 
-      // Background + grain
-      const bgColor = getBackgroundColor(sanity)
-      clearCanvas(ctx, w, h, sanity, bgColor)
-      drawGrain(ctx, w, h, sanity)
+      clearCanvas(ctx, w, h)
+      drawCursorAura(ctx, w, h, mx, my)
+      drawHeadline(ctx, w, scrollTop, headlineMetrics.current)
+      drawSectionHeading(ctx, w, scrollTop, items)
 
-      // Section headings (faint, behind text)
-      drawSectionHeading(ctx, w, scrollTop, items, sanity)
-
-      // Margin annotations
       const visibleItems = items.filter(
         it => (it.y - scrollTop) >= -SCROLL_BUFFER && (it.y - scrollTop) <= h + SCROLL_BUFFER
       )
-      drawMarginAnnotations(ctx, w, h, visibleItems, sanity, time, scrollTop)
+      drawMarginAnnotations(ctx, w, h, visibleItems, time, scrollTop)
 
-      // Text pass
-      ctx.font         = FONT
+      // Text pass — per-char proximity effects
+      ctx.font = FONT
       ctx.textBaseline = 'alphabetic'
-      applyInkBleed(ctx, sanity)
 
       for (const item of visibleItems) {
-        const screenY = item.y - scrollTop + getLineOscillation(item.lineIndex, sanity, time)
-        const text    = substituteGlyphs(
-          maybeReverseWords(item.text, sanity, item.lineIndex),
-          sanity, time, item.lineIndex
-        )
-        ctx.fillStyle = getTextColor(sanity)
-        drawGlyphDrift(ctx, item.x, screenY, text, sanity, time, item.lineIndex, charCache)
+        const screenY = item.y - scrollTop
+
+        // Fast path: skip per-char work for lines far from the tentacle
+        const lineMidX = item.x + item.width * 0.5
+        let lineMinDist = Infinity
+        for (const seg of spine) {
+          const d = Math.hypot(lineMidX - seg.x, screenY - seg.y)
+          if (d < lineMinDist) lineMinDist = d
+        }
+        if (lineMinDist > INFLUENCE_RADIUS + item.width * 0.6) {
+          ctx.fillStyle = '#c8a882'
+          ctx.fillText(item.text, item.x, screenY)
+          continue
+        }
+
+        // Per-character rendering for lines near the tentacle
+        let curX = item.x
+        for (let i = 0; i < item.text.length; i++) {
+          const ch = item.text[i]
+          let charW = charCache.get(ch)
+          if (charW === undefined) {
+            charW = ctx.measureText(ch).width
+            charCache.set(ch, charW)
+          }
+
+          const { proximity, dx, dy } = getCharEffect(curX + charW * 0.5, screenY, spine)
+          const drawCh = substituteByProximity(ch, i, item.lineIndex, proximity, time)
+          ctx.fillStyle = getProximityTextColor(proximity)
+          ctx.fillText(drawCh, curX + dx, screenY + dy)
+          curX += charW
+        }
       }
 
-      resetBleed(ctx)
-
-      // Vignette (always on top)
-      drawVignette(ctx, w, h, sanity)
+      drawTentacle(ctx, spine)
+      drawVignette(ctx, w, h)
 
       rafId = requestAnimationFrame(loop)
     }
@@ -141,13 +187,14 @@ export default function ManuscriptCanvas() {
   return (
     <div
       ref={containerRef}
-      style={{ position: 'relative', width: '100%', height: '100vh', overflow: 'hidden' }}
+      onMouseMove={handleMouseMove}
+      onMouseLeave={handleMouseLeave}
+      style={{ position: 'relative', width: '100%', height: '100vh', overflow: 'hidden', cursor: 'none' }}
     >
       <canvas
         ref={canvasRef}
         style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
       />
-      {/* Invisible div that captures scroll and creates scroll travel */}
       <div
         ref={scrollRef}
         onScroll={handleScroll}
