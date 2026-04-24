@@ -30,7 +30,7 @@ export function drawHeadline(ctx, w, scrollTop, metrics) {
   ctx.textBaseline = 'top'
   ctx.textAlign = 'left'
   ctx.font = `bold ${fontSize}px "UnifrakturCook"`
-  ctx.fillStyle = 'rgba(200, 168, 130, 0.90)'
+  ctx.fillStyle = 'rgba(105, 200, 120, 0.88)'
 
   for (let i = 0; i < HEADLINE_WORDS.length; i++) {
     ctx.fillText(HEADLINE_WORDS[i], padX, startY + i * lineH)
@@ -39,7 +39,7 @@ export function drawHeadline(ctx, w, scrollTop, metrics) {
 }
 
 export function clearCanvas(ctx, w, h) {
-  ctx.fillStyle = '#1a1208'
+  ctx.fillStyle = '#060c06'
   ctx.fillRect(0, 0, w, h)
 }
 
@@ -73,10 +73,10 @@ const SECTION_TITLES = [
 export function drawSectionHeading(ctx, w, scrollTop, items) {
   if (items.length === 0) return
   ctx.save()
-  ctx.font = '13px "IM Fell English"'
+  ctx.font = 'bold 32px "UnifrakturCook"'
   ctx.textAlign = 'center'
   ctx.textBaseline = 'alphabetic'
-  ctx.fillStyle = 'rgba(200, 168, 130, 0.35)'
+  ctx.fillStyle = 'rgba(105, 200, 120, 0.55)'
 
   const partStarts = [null, null, null]
   for (const item of items) {
@@ -84,9 +84,9 @@ export function drawSectionHeading(ctx, w, scrollTop, items) {
   }
   for (let pi = 0; pi < 3; pi++) {
     if (partStarts[pi] === null) continue
-    const hy = partStarts[pi] - 28 - scrollTop
-    if (hy < -40 || hy > ctx.canvas.height / (window.devicePixelRatio || 1) + 40) continue
-    ctx.fillText(SECTION_TITLES[pi].toUpperCase(), w / 2, hy)
+    const hy = partStarts[pi] - 44 - scrollTop
+    if (hy < -60 || hy > ctx.canvas.height / (window.devicePixelRatio || 1) + 60) continue
+    ctx.fillText(SECTION_TITLES[pi], w / 2, hy)
   }
   ctx.restore()
 }
@@ -113,11 +113,11 @@ export function drawMarginAnnotations(ctx, w, h, visibleItems, time, scrollTop) 
 
     if (item.lineIndex % 18 < 9) {
       ctx.textAlign = 'right'
-      ctx.fillStyle = `rgba(160, 60, 20, 0.20)`
+      ctx.fillStyle = `rgba(50, 140, 65, 0.22)`
       ctx.fillText(ann, MARGIN_H - 8 + wobble, screenY)
     } else {
       ctx.textAlign = 'left'
-      ctx.fillStyle = `rgba(140, 50, 15, 0.20)`
+      ctx.fillStyle = `rgba(40, 120, 55, 0.22)`
       ctx.fillText(ann, w - MARGIN_H + 8 + wobble, screenY)
     }
   }

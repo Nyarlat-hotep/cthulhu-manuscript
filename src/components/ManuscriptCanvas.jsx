@@ -2,13 +2,16 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { buildRenderItems, disposeLayout, FONT_SIZE, LINE_HEIGHT } from '../utils/layout.js'
 import { getProximityTextColor, substituteByProximity } from '../utils/effects.js'
 import { computeHeadlineMetrics, drawHeadline, clearCanvas, drawCursorAura, drawVignette, drawSectionHeading, drawMarginAnnotations } from '../utils/render.js'
-import { createSpine, buildSpine, drawTentacle, getCharEffect, INFLUENCE_RADIUS } from '../utils/tentacle.js'
+import { createSpine, buildSpine, getCharEffect, INFLUENCE_RADIUS } from '../utils/tentacle.js'
+import { initTentacleGL, renderTentacleGL } from '../utils/tentacleGL.js'
 
 const FONT = `${FONT_SIZE}px "IM Fell English"`
 const SCROLL_BUFFER = LINE_HEIGHT * 4
 
 export default function ManuscriptCanvas() {
   const canvasRef    = useRef(null)
+  const glCanvasRef  = useRef(null)
+  const glStateRef   = useRef(null)
   const containerRef = useRef(null)
   const scrollRef    = useRef(null)
 
@@ -30,6 +33,14 @@ export default function ManuscriptCanvas() {
   useEffect(() => {
     document.fonts.ready.then(() => setFontsReady(true))
   }, [])
+
+  useEffect(() => {
+    if (!fontsReady) return
+    const glCanvas = glCanvasRef.current
+    if (!glCanvas) return
+    glStateRef.current = initTentacleGL(glCanvas)
+    return () => { glStateRef.current = null }
+  }, [fontsReady])
 
   const handleScroll = useCallback((e) => {
     scrollTopRef.current = e.currentTarget.scrollTop
@@ -57,6 +68,11 @@ export default function ManuscriptCanvas() {
       const dpr = window.devicePixelRatio || 1
       canvas.width  = Math.round(w * dpr)
       canvas.height = Math.round(h * dpr)
+      const glCanvas = glCanvasRef.current
+      if (glCanvas) {
+        glCanvas.width  = Math.round(w * dpr)
+        glCanvas.height = Math.round(h * dpr)
+      }
 
       // Compute headline metrics and use totalH as story text padding
       const ctx = canvas.getContext('2d')
@@ -77,9 +93,10 @@ export default function ManuscriptCanvas() {
     const canvas = canvasRef.current
     if (!canvas) return
     const ctx = canvas.getContext('2d')
-    let lastT = performance.now(), rafId
+    let lastT = performance.now(), rafId, running = true
 
     function loop(now) {
+      if (!running) return
       const delta = Math.min((now - lastT) / 1000, 0.05)
       lastT = now
       timeRef.current += delta
@@ -99,15 +116,15 @@ export default function ManuscriptCanvas() {
       const prev = prevMouseRef.current
       const onScreen = mx > -250
       if (onScreen && prev.x > -250) {
-        const rawSpeed = Math.hypot(mx - prev.x, my - prev.y) / Math.max(delta, 0.001)
-        // First pass: smooth the noisy raw speed reading
-        smoothSpeedRef.current += (rawSpeed - smoothSpeedRef.current) * Math.min(1, delta * 5)
+        const rawSpeed = Math.min(Math.hypot(mx - prev.x, my - prev.y) / Math.max(delta, 0.001), 480)
+        smoothSpeedRef.current += (rawSpeed - smoothSpeedRef.current) * Math.min(1, delta * 2.5)
       } else {
-        smoothSpeedRef.current *= Math.max(0, 1 - delta * 4)
+        smoothSpeedRef.current *= Math.max(0, 1 - delta * 10)
       }
-      // Second pass: smooth writhe intensity from the already-smooth speed
-      const writheTarget = Math.min(1, smoothSpeedRef.current / 400)
-      writheRef.current += (writheTarget - writheRef.current) * Math.min(1, delta * 2.5)
+      const writheTarget = Math.min(1, smoothSpeedRef.current / 300)
+      // Asymmetric: slow build, fast drop
+      const blend = writheTarget > writheRef.current ? delta * 2 : delta * 10
+      writheRef.current += (writheTarget - writheRef.current) * Math.min(1, blend)
 
       if (onScreen) { prev.x = mx; prev.y = my }
       else          { prev.x = -300; prev.y = -300 }
@@ -142,7 +159,7 @@ export default function ManuscriptCanvas() {
           if (d < lineMinDist) lineMinDist = d
         }
         if (lineMinDist > INFLUENCE_RADIUS + item.width * 0.6) {
-          ctx.fillStyle = '#c8a882'
+          ctx.fillStyle = '#7ab888'
           ctx.fillText(item.text, item.x, screenY)
           continue
         }
@@ -165,7 +182,7 @@ export default function ManuscriptCanvas() {
         }
       }
 
-      drawTentacle(ctx, spine)
+      renderTentacleGL(glStateRef.current, spine, w, h, dpr)
       drawVignette(ctx, w, h)
 
       rafId = requestAnimationFrame(loop)
@@ -174,8 +191,14 @@ export default function ManuscriptCanvas() {
     rafId = requestAnimationFrame(loop)
 
     const onVis = () => {
-      if (document.hidden) cancelAnimationFrame(rafId)
-      else rafId = requestAnimationFrame(loop)
+      if (document.hidden) {
+        running = false
+        cancelAnimationFrame(rafId)
+      } else {
+        running = true
+        lastT = performance.now()
+        rafId = requestAnimationFrame(loop)
+      }
     }
     document.addEventListener('visibilitychange', onVis)
     return () => {
@@ -195,6 +218,10 @@ export default function ManuscriptCanvas() {
         ref={canvasRef}
         style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
       />
+      <canvas
+        ref={glCanvasRef}
+        style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
+      />
       <div
         ref={scrollRef}
         onScroll={handleScroll}
@@ -212,8 +239,8 @@ export default function ManuscriptCanvas() {
         <div style={{
           position: 'absolute', inset: 0,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          background: '#1a1208',
-          color: '#c8a882',
+          background: '#060c06',
+          color: '#7ab888',
           fontFamily: '"IM Fell English", Georgia, serif',
           fontSize: '1.1rem',
           letterSpacing: '0.12em',

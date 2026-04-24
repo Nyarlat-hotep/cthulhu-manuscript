@@ -8,21 +8,21 @@ function hexToRgb(hex) {
   ]
 }
 
-const SEPIA = hexToRgb('#c8a882')
-const GREEN = hexToRgb('#6ddd72')
+const BASE  = hexToRgb('#7ab888')
+const VIVID = hexToRgb('#72e678')
 
 function smoothstep(a, b, x) {
   const t = Math.max(0, Math.min(1, (x - a) / (b - a)))
   return t * t * (3 - 2 * t)
 }
 
-// Smooth sepia → green gradient around the tentacle
+// Muted green → vivid green gradient around the tentacle
 export function getProximityTextColor(proximity) {
   const t = smoothstep(0.08, 0.92, proximity)
-  if (t === 0) return '#c8a882'
-  const r = Math.round(SEPIA[0] + (GREEN[0] - SEPIA[0]) * t)
-  const g = Math.round(SEPIA[1] + (GREEN[1] - SEPIA[1]) * t)
-  const b = Math.round(SEPIA[2] + (GREEN[2] - SEPIA[2]) * t)
+  if (t === 0) return '#7ab888'
+  const r = Math.round(BASE[0] + (VIVID[0] - BASE[0]) * t)
+  const g = Math.round(BASE[1] + (VIVID[1] - BASE[1]) * t)
+  const b = Math.round(BASE[2] + (VIVID[2] - BASE[2]) * t)
   return `rgb(${r},${g},${b})`
 }
 
